@@ -120,12 +120,12 @@ struct _props_t {
 	uint32_t max_size;
 
 	unsigned nimpls;
-	props_impl_t impls [0];
+	props_impl_t impls [1];
 };
 
 #define PROPS_T(PROPS, MAX_NIMPLS) \
 	props_t (PROPS); \
-	props_impl_t _impls [(MAX_NIMPLS)]
+	props_impl_t _impls [(MAX_NIMPLS-1)]
 
 // rt-safe
 static inline int
