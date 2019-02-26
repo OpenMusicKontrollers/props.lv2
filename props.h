@@ -152,6 +152,11 @@ props_set(props_t *props, LV2_Atom_Forge *forge, uint32_t frames,
 
 // rt-safe
 static inline void
+props_get(props_t *props, LV2_Atom_Forge *forge, uint32_t frames,
+	LV2_URID property, LV2_Atom_Forge_Ref *ref);
+
+// rt-safe
+static inline void
 props_stash(props_t *props, LV2_URID property);
 
 // rt-safe
@@ -298,6 +303,44 @@ _props_patch_set(props_t *props, LV2_Atom_Forge *forge, uint32_t frames,
 			ref = lv2_atom_forge_atom(forge, impl->value.size, impl->type);
 		if(ref)
 			ref = lv2_atom_forge_write(forge, impl->value.body, impl->value.size);
+	}
+	if(ref)
+		lv2_atom_forge_pop(forge, &obj_frame);
+
+	return ref;
+}
+
+static inline LV2_Atom_Forge_Ref
+_props_patch_get(props_t *props, LV2_Atom_Forge *forge, uint32_t frames,
+	props_impl_t *impl, int32_t sequence_num)
+{
+	LV2_Atom_Forge_Frame obj_frame;
+
+	LV2_Atom_Forge_Ref ref = lv2_atom_forge_frame_time(forge, frames);
+
+	if(ref)
+		ref = lv2_atom_forge_object(forge, &obj_frame, 0, props->urid.patch_get);
+	{
+		if(props->urid.subject) // is optional
+		{
+			if(ref)
+				ref = lv2_atom_forge_key(forge, props->urid.patch_subject);
+			if(ref)
+				ref = lv2_atom_forge_urid(forge, props->urid.subject);
+		}
+
+		if(sequence_num) // is optional
+		{
+			if(ref)
+				ref = lv2_atom_forge_key(forge, props->urid.patch_sequence);
+			if(ref)
+				ref = lv2_atom_forge_int(forge, sequence_num);
+		}
+
+		if(ref)
+			ref = lv2_atom_forge_key(forge, props->urid.patch_property);
+		if(ref)
+			ref = lv2_atom_forge_urid(forge, impl->property);
 	}
 	if(ref)
 		lv2_atom_forge_pop(forge, &obj_frame);
@@ -775,6 +818,19 @@ props_set(props_t *props, LV2_Atom_Forge *forge, uint32_t frames,
 
 		if(*ref && !impl->def->hidden) //TODO use patch:sequenceNumber
 			*ref = _props_patch_set(props, forge, frames, impl, 0);
+	}
+}
+
+static inline void
+props_get(props_t *props, LV2_Atom_Forge *forge, uint32_t frames,
+	LV2_URID property, LV2_Atom_Forge_Ref *ref)
+{
+	props_impl_t *impl = _props_impl_get(props, property);
+
+	if(impl)
+	{
+		if(*ref && !impl->def->hidden) //TODO use patch:sequenceNumber
+			*ref = _props_patch_get(props, forge, frames, impl, 0);
 	}
 }
 
