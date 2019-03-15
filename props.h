@@ -124,9 +124,12 @@ struct _props_t {
 	props_impl_t impls [1];
 };
 
+#define NEXT_POWER_OF_2(x) \
+	( ( (x) <= 2 ) ? (x) : ( 1 << ( 32 - __builtin_clz( (x) - 1 ) ) ) )
+
 #define PROPS_T(PROPS, MAX_NIMPLS) \
 	props_t (PROPS); \
-	props_impl_t _impls [MAX_NIMPLS]
+	props_impl_t _impls [NEXT_POWER_OF_2(MAX_NIMPLS) - 1]
 
 // rt-safe
 static inline int
