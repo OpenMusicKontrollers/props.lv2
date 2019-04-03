@@ -837,7 +837,7 @@ static inline void
 props_get(props_t *props, LV2_Atom_Forge *forge, uint32_t frames,
 	LV2_URID property, LV2_Atom_Forge_Ref *ref)
 {
-	props_impl_t *impl = _props_impl_get(props, property);
+	props_impl_t *impl = _props_bsearch(props, property);
 
 	if(impl)
 	{
