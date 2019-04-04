@@ -15,15 +15,24 @@
  * http://www.perlfoundation.org/artistic_license_2_0.
  */
 
-
 #include <assert.h>
 
 #include <props.h>
 
 #define MAX_URIDS 512
 
+#define PROPS_PREFIX		"http://open-music-kontrollers.ch/lv2/props#"
+#define PROPS_TEST_URI	PROPS_PREFIX"test"
+
+#define MAX_NPROPS 1
+
+typedef struct _plugstate_t plugstate_t;
 typedef struct _urid_t urid_t;
 typedef void (*test_t)(props_t *props);
+
+struct _plugstate_t {
+	uint32_t foo;
+};
 
 struct _urid_t {
 	LV2_URID urid;
@@ -57,51 +66,53 @@ static LV2_URID_Map map = {
 	.map = _map
 };
 
+static const props_def_t defs [MAX_NPROPS] = {
+	{
+		.property = PROPS_PREFIX"foo",
+		.offset = offsetof(plugstate_t, foo),
+		.type = LV2_ATOM__Int
+	}
+};
+
+static plugstate_t state;
+static plugstate_t stash;
+
 static void
 _test_1(props_t *props)
 {
 	assert(props);
-	//FIXME
-}
 
-static void
-_test_2(props_t *props)
-{
-	assert(props);
-	//FIXME
+	const LV2_URID property = props_map(props, PROPS_PREFIX"foo");
+	assert(property != 0);
+
+	props_impl_t *impl = _props_impl_get(props, property);
+	assert(impl);
+
+	assert(impl->property == property);
+	assert(impl->type != 0); //FIXME
+	assert(impl->access != 0); //FIXME
+
+	assert(impl->value.size == sizeof(state.foo));
+	assert(impl->value.body == &state.foo);
+
+	assert(impl->stash.size == sizeof(stash.foo));
+	assert(impl->stash.body == &stash.foo);
+
+	assert(impl->def == &defs[0]);
+
+	assert(atomic_load(&impl->state) == PROP_STATE_NONE);
+	assert(impl->stashing == false);
 }
 
 static const test_t tests [] = {
 	_test_1,
-	_test_2,
 	NULL
-};
-
-#define PROPS_PREFIX		"http://open-music-kontrollers.ch/lv2/props#"
-#define PROPS_TEST_URI	PROPS_PREFIX"test"
-
-#define MAX_NPROPS 1
-
-typedef struct _plugstate_t plugstate_t;
-
-struct _plugstate_t {
-	uint32_t dummy;
-};
-
-static const props_def_t defs [MAX_NPROPS] = {
-	{
-		.property = PROPS_PREFIX"dummy",
-		.offset = offsetof(plugstate_t, dummy),
-		.type = LV2_ATOM__Int
-	}
 };
 
 int
 main(int argc __attribute__((unused)), char **argv __attribute__((unused)))
 {
 	static props_t props;
-	static plugstate_t state;
-	static plugstate_t stash;
 
 	for(const test_t *test = tests; *test; test++)
 	{
