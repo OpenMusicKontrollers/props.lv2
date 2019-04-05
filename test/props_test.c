@@ -28,7 +28,8 @@
 
 typedef struct _plugstate_t plugstate_t;
 typedef struct _urid_t urid_t;
-typedef void (*test_t)(props_t *props);
+typedef struct _handle_t handle_t;
+typedef void (*test_t)(handle_t *handle);
 
 struct _plugstate_t {
 	int32_t b32;
@@ -43,44 +44,37 @@ struct _urid_t {
 	char *uri;
 };
 
-static urid_t urids [MAX_URIDS];
-static LV2_URID nurid;
+struct _handle_t {
+	PROPS_T(props, MAX_NPROPS);
+	plugstate_t state;
+	plugstate_t stash;
 
-static void
-_map_deinit()
-{
-	for(urid_t *itm=urids; itm->urid; itm++)
-	{
-		free(itm->uri);
-	}
-}
+	LV2_URID_Map map;
+
+	urid_t urids [MAX_URIDS];
+	LV2_URID urid;
+};
 
 static LV2_URID
-_map(LV2_URID_Map_Handle instance __attribute__((unused)), const char *uri)
+_map(LV2_URID_Map_Handle instance, const char *uri)
 {
+	handle_t *handle = instance;
+
 	urid_t *itm;
-	for(itm=urids; itm->urid; itm++)
+	for(itm=handle->urids; itm->urid; itm++)
 	{
 		if(!strcmp(itm->uri, uri))
-		{
 			return itm->urid;
-		}
 	}
 
-	assert(nurid + 1 < MAX_URIDS);
+	assert(handle->urid + 1 < MAX_URIDS);
 
 	// create new
-	itm->urid = ++nurid;
+	itm->urid = ++handle->urid;
 	itm->uri = strdup(uri);
-	assert(itm->uri);
 
 	return itm->urid;
 }
-
-static LV2_URID_Map map = {
-	.handle = NULL,
-	.map = _map
-};
 
 static const props_def_t defs [MAX_NPROPS] = {
 	{
@@ -110,13 +104,15 @@ static const props_def_t defs [MAX_NPROPS] = {
 	}
 };
 
-static plugstate_t state;
-static plugstate_t stash;
-
 static void
-_test_1(props_t *props)
+_test_1(handle_t *handle)
 {
-	assert(props);
+	assert(handle);
+
+	props_t *props = &handle->props;
+	plugstate_t *state = &handle->state;
+	plugstate_t *stash = &handle->stash;
+	LV2_URID_Map *map = &handle->map;
 
 	for(unsigned i = 0; i < MAX_NPROPS; i++)
 	{
@@ -128,8 +124,8 @@ _test_1(props_t *props)
 		props_impl_t *impl = _props_impl_get(props, property);
 		assert(impl);
 
-		const LV2_URID type = map.map(map.handle, def->type);
-		const LV2_URID access = map.map(map.handle, def->access
+		const LV2_URID type = map->map(map->handle, def->type);
+		const LV2_URID access = map->map(map->handle, def->access
 			? def->access : LV2_PATCH__writable);
 
 		assert(impl->property == property);
@@ -145,43 +141,43 @@ _test_1(props_t *props)
 		{
 			case 0:
 			{
-				assert(impl->value.size == sizeof(state.b32));
-				assert(impl->value.body == &state.b32);
+				assert(impl->value.size == sizeof(state->b32));
+				assert(impl->value.body == &state->b32);
 
-				assert(impl->stash.size == sizeof(stash.b32));
-				assert(impl->stash.body == &stash.b32);
+				assert(impl->stash.size == sizeof(stash->b32));
+				assert(impl->stash.body == &stash->b32);
 			} break;
 			case 1:
 			{
-				assert(impl->value.size == sizeof(state.i32));
-				assert(impl->value.body == &state.i32);
+				assert(impl->value.size == sizeof(state->i32));
+				assert(impl->value.body == &state->i32);
 
-				assert(impl->stash.size == sizeof(stash.i32));
-				assert(impl->stash.body == &stash.i32);
+				assert(impl->stash.size == sizeof(stash->i32));
+				assert(impl->stash.body == &stash->i32);
 			} break;
 			case 2:
 			{
-				assert(impl->value.size == sizeof(state.i64));
-				assert(impl->value.body == &state.i64);
+				assert(impl->value.size == sizeof(state->i64));
+				assert(impl->value.body == &state->i64);
 
-				assert(impl->stash.size == sizeof(stash.i64));
-				assert(impl->stash.body == &stash.i64);
+				assert(impl->stash.size == sizeof(stash->i64));
+				assert(impl->stash.body == &stash->i64);
 			} break;
 			case 3:
 			{
-				assert(impl->value.size == sizeof(state.f32));
-				assert(impl->value.body == &state.f32);
+				assert(impl->value.size == sizeof(state->f32));
+				assert(impl->value.body == &state->f32);
 
-				assert(impl->stash.size == sizeof(stash.f32));
-				assert(impl->stash.body == &stash.f32);
+				assert(impl->stash.size == sizeof(stash->f32));
+				assert(impl->stash.body == &stash->f32);
 			} break;
 			case 4:
 			{
-				assert(impl->value.size == sizeof(state.f64));
-				assert(impl->value.body == &state.f64);
+				assert(impl->value.size == sizeof(state->f64));
+				assert(impl->value.body == &state->f64);
 
-				assert(impl->stash.size == sizeof(stash.f64));
-				assert(impl->stash.body == &stash.f64);
+				assert(impl->stash.size == sizeof(stash->f64));
+				assert(impl->stash.body == &stash->f64);
 			} break;
 			default:
 			{
@@ -199,21 +195,25 @@ static const test_t tests [] = {
 int
 main(int argc __attribute__((unused)), char **argv __attribute__((unused)))
 {
-	static props_t props;
+	static handle_t handle;
 
 	for(const test_t *test = tests; *test; test++)
 	{
-		memset(&props, 0, sizeof(props));
-		memset(&state, 0, sizeof(state));
-		memset(&stash, 0, sizeof(stash));
+		memset(&handle, 0, sizeof(handle));
 
-		assert(props_init(&props, PROPS_PREFIX"subj", defs, MAX_NPROPS,
-			&state, &stash, &map, NULL) == 1);
+		handle.map.handle = &handle;
+		handle.map.map = _map;
 
-		(*test)(&props);
+		assert(props_init(&handle.props, PROPS_PREFIX"subj", defs, MAX_NPROPS,
+			&handle.state, &handle.stash, &handle.map, NULL) == 1);
+
+		(*test)(&handle);
 	}
 
-	_map_deinit();
+	for(urid_t *itm=handle.urids; itm->urid; itm++)
+	{
+		free(itm->uri);
+	}
 
 	return 0;
 }
