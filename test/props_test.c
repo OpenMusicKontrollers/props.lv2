@@ -31,6 +31,10 @@ typedef struct _plugstate_t plugstate_t;
 typedef struct _urid_t urid_t;
 typedef struct _handle_t handle_t;
 typedef void (*test_t)(handle_t *handle);
+typedef void *(*ser_atom_realloc_t)(void *data, void *buf, size_t size);
+typedef void  (*ser_atom_free_t)(void *data, void *buf);
+
+typedef struct _ser_atom_t ser_atom_t;
 
 struct _plugstate_t {
 	int32_t b32;
@@ -85,6 +89,157 @@ struct _handle_t {
 	urid_t urids [MAX_URIDS];
 	LV2_URID urid;
 };
+
+struct _ser_atom_t {
+	ser_atom_realloc_t realloc;
+	ser_atom_free_t free;
+	void *data;
+
+	size_t size;
+	size_t offset;
+	union {
+		uint8_t *buf;
+		LV2_Atom *atom;
+	};
+};
+
+static LV2_Atom_Forge_Ref
+_ser_atom_sink(LV2_Atom_Forge_Sink_Handle handle, const void *buf,
+	uint32_t size)
+{
+	ser_atom_t *ser = handle;
+	const size_t needed = ser->offset + size;
+
+	while(needed > ser->size)
+	{
+		const size_t augmented = ser->size
+			? ser->size << 1
+			: 1024;
+		uint8_t *grown = ser->realloc(ser->data, ser->buf, augmented);
+		if(!grown) // out-of-memory
+		{
+			return 0;
+		}
+
+		ser->buf = grown;
+		ser->size = augmented;
+	}
+
+	const LV2_Atom_Forge_Ref ref = ser->offset + 1;
+	memcpy(&ser->buf[ser->offset], buf, size);
+	ser->offset += size;
+
+	return ref;
+}
+
+static LV2_Atom *
+_ser_atom_deref(LV2_Atom_Forge_Sink_Handle handle, LV2_Atom_Forge_Ref ref)
+{
+	ser_atom_t *ser = handle;
+
+	if(!ref) // invalid reference
+	{
+		return NULL;
+	}
+
+	const size_t offset = ref - 1;
+	return (LV2_Atom *)&ser->buf[offset];
+}
+
+static void *
+_ser_atom_realloc(void *data, void *buf, size_t size)
+{
+	(void)data;
+
+	return realloc(buf, size);
+}
+
+static void
+_ser_atom_free(void *data, void *buf)
+{
+	(void)data;
+
+	free(buf);
+}
+
+static int
+ser_atom_deinit(ser_atom_t *ser)
+{
+	if(!ser)
+	{
+		return -1;
+	}
+
+	if(ser->buf)
+	{
+		ser->free(ser->data, ser->buf);
+	}
+
+	ser->size = 0;
+	ser->offset = 0;
+	ser->buf = NULL;
+
+	return 0;
+}
+
+static int
+ser_atom_funcs(ser_atom_t *ser, ser_atom_realloc_t realloc,
+	ser_atom_free_t free, void *data)
+{
+	if(!ser || !realloc || !free || ser_atom_deinit(ser))
+	{
+		return -1;
+	}
+
+	ser->realloc = realloc;
+	ser->free = free;
+	ser->data = data;
+
+	return 0;
+}
+
+static int
+ser_atom_init(ser_atom_t *ser)
+{
+	if(!ser)
+	{
+		return -1;
+	}
+
+	ser->size = 0;
+	ser->offset = 0;
+	ser->buf = NULL;
+
+	return ser_atom_funcs(ser, _ser_atom_realloc, _ser_atom_free, NULL);
+}
+
+#if 0
+static int
+ser_atom_reset(ser_atom_t *ser, LV2_Atom_Forge *forge)
+{
+	if(!ser || !forge)
+	{
+		return -1;
+	}
+
+	lv2_atom_forge_set_sink(forge, _ser_atom_sink, _ser_atom_deref, ser);
+
+	ser->offset = 0;
+
+	return 0;
+}
+#endif
+
+static LV2_Atom *
+ser_atom_get(ser_atom_t *ser)
+{
+	if(!ser)
+	{
+		return NULL;
+	}
+
+	return ser->atom;
+}
 
 static LV2_URID
 _map(LV2_URID_Map_Handle instance, const char *uri)
@@ -205,6 +360,8 @@ _test_1(handle_t *handle)
 		const LV2_URID property = props_map(props, def->property);
 		assert(property != 0);
 		assert(property == map->map(map->handle, def->property));
+
+		assert(strcmp(props_unmap(props, property), def->property) == 0);
 
 		props_impl_t *impl = _props_impl_get(props, property);
 		assert(impl);
@@ -344,8 +501,116 @@ _test_1(handle_t *handle)
 	}
 }
 
+static void
+_test_2(handle_t *handle)
+{
+	assert(handle);
+
+	props_t *props = &handle->props;
+	plugstate_t *state = &handle->state;
+	plugstate_t *stash = &handle->stash;
+	LV2_URID_Map *map = &handle->map;
+
+	LV2_Atom_Forge forge;
+	LV2_Atom_Forge_Frame frame;
+	LV2_Atom_Forge_Ref ref;
+	ser_atom_t ser;
+
+	lv2_atom_forge_init(&forge, map);
+	assert(ser_atom_init(&ser) == 0);
+
+	lv2_atom_forge_set_sink(&forge, _ser_atom_sink, _ser_atom_deref, &ser);
+
+	ref = lv2_atom_forge_sequence_head(&forge, &frame, 0);
+	assert(ref);
+
+	props_idle(props, &forge, 0, &ref);
+	assert(ref);
+
+	const LV2_URID property = props_map(props, defs[0].property);
+	assert(property);
+
+	state->b32 = true;
+
+	props_set(props, &forge, 1, property, &ref);
+	assert(ref);
+
+	state->b32 = false;
+
+	lv2_atom_forge_pop(&forge, &frame);
+
+	const LV2_Atom_Sequence *seq = (const LV2_Atom_Sequence *)ser_atom_get(&ser);
+	assert(seq);
+
+	unsigned nevs = 0;
+	LV2_ATOM_SEQUENCE_FOREACH(seq, ev)
+	{
+		const LV2_Atom *atom = &ev->body;
+
+		assert(ev->time.frames == 1);
+		assert(atom->type == forge.Object);
+
+		const LV2_Atom_Object *obj = (const LV2_Atom_Object *)atom;
+		assert(obj->body.id == 0);
+		assert(obj->body.otype == props->urid.patch_set);
+
+		unsigned nprops = 0;
+		LV2_ATOM_OBJECT_FOREACH(obj, prop)
+		{
+			assert(prop->context == 0);
+
+			if(prop->key == props->urid.patch_subject)
+			{
+				const LV2_Atom_URID *val = (const LV2_Atom_URID *)&prop->value;
+
+				assert(val->atom.type == forge.URID);
+				assert(val->atom.size == sizeof(uint32_t));
+				assert(val->body == props->urid.subject);
+
+				nprops |= 0x1;
+			}
+			else if(prop->key == props->urid.patch_property)
+			{
+				const LV2_Atom_URID *val = (const LV2_Atom_URID *)&prop->value;
+
+				assert(val->atom.type == forge.URID);
+				assert(val->atom.size == sizeof(uint32_t));
+				assert(val->body == property);
+
+				nprops |= 0x2;
+			}
+			else if(prop->key == props->urid.patch_value)
+			{
+				const LV2_Atom_Bool *val = (const LV2_Atom_Bool *)&prop->value;
+
+				assert(val->atom.type == forge.Bool);
+				assert(val->atom.size == sizeof(int32_t));
+				assert(val->body == true);
+
+				nprops |= 0x4;
+			}
+			else
+			{
+				assert(false);
+			}
+		}
+		assert(nprops == 0x7);
+
+		assert(props_advance(props, &forge, ev->time.frames, obj, &ref) == 1);
+
+		assert(state->b32 == true);
+		assert(stash->b32 == true);
+
+		nevs |= 0x1;
+	}
+	assert(nevs == 0x1);
+
+	assert(ser_atom_deinit(&ser) == 0);
+}
+
 static const test_t tests [] = {
 	_test_1,
+	_test_2,
 	NULL
 };
 
