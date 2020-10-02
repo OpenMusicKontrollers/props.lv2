@@ -22,7 +22,6 @@ stages:
     - mkdir build
     - pushd build
     - cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=${CI_PROJECT_DIR} -DPLUGIN_DEST="${BASE_NAME}-$(cat ../VERSION)/${CI_BUILD_NAME}/${BASE_NAME}" -DCMAKE_CI_BUILD_NAME=${CI_BUILD_NAME} ..
-    - cmake .. # needed for darwin
     - make
     - make install
 
